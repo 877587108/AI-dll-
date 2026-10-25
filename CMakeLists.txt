@@ -157,6 +157,15 @@ if (Qt6_FOUND)
     target_link_libraries(markloc_defectview PRIVATE markloc_core Qt6::Widgets Qt6::Gui Qt6::Core)
     target_include_directories(markloc_defectview PRIVATE src)
 
+    # ---- locate plugin debugger (locate plugin + model + image visual compare)
+    add_executable(markloc_locateview
+        src/gui/locateview_main.cpp
+        src/gui/LocateViewWindow.cpp
+        src/gui/LocateViewWindow.hpp
+    )
+    target_link_libraries(markloc_locateview PRIVATE markloc_core Qt6::Widgets Qt6::Gui Qt6::Core)
+    target_include_directories(markloc_locateview PRIVATE src include)
+
     # ---- flow document generator (QPainter, so labels can be Chinese)
     add_executable(markloc_flowdoc tools/flowdoc.cpp)
     target_link_libraries(markloc_flowdoc PRIVATE markloc_core Qt6::Widgets Qt6::Gui Qt6::Core)
@@ -649,6 +658,38 @@ target_include_directories(markloc_segprobe PRIVATE src src/gui modules/chardet 
 add_executable(markloc_anglescan tools/angle_scan.cpp)
 target_link_libraries(markloc_anglescan PRIVATE markloc_core ${OpenCV_LIBS} Qt6::Core)
 target_include_directories(markloc_anglescan PRIVATE src src/gui modules/chardet tools ${Qt6_INCLUDE_DIRS})
+add_executable(markloc_logosize tools/logo_size_probe.cpp)
+target_link_libraries(markloc_logosize PRIVATE markloc_core ${OpenCV_LIBS} Qt6::Core)
+target_include_directories(markloc_logosize PRIVATE src src/gui modules/chardet tools ${Qt6_INCLUDE_DIRS})
+if (TARGET markloc_logosize)
+    list(APPEND ALL_TARGETS markloc_logosize)
+endif()
+# ============================================================ 定位插件 DLL
+# 定位算法通过插件注入。宿主 markloc_locatebench 加载这些 DLL，
+# 用同一批图、同一套指标横向比较不同定位算法。
+add_library(markloc_locate_ncc SHARED plugins/locate_ncc/plugin_ncc.cpp)
+target_include_directories(markloc_locate_ncc PRIVATE include ${OpenCV_INCLUDE_DIRS})
+target_link_libraries(markloc_locate_ncc PRIVATE ${OpenCV_LIBS})
+set_target_properties(markloc_locate_ncc PROPERTIES
+    PREFIX "" OUTPUT_NAME "locate_ncc"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Debug/plugins"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Release/plugins")
+if (MSVC)
+    target_compile_options(markloc_locate_ncc PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+endif()
+list(APPEND ALL_TARGETS markloc_locate_ncc)
+
+add_executable(markloc_locatebench tools/locate_bench.cpp)
+target_link_libraries(markloc_locatebench PRIVATE markloc_core ${OpenCV_LIBS} Qt6::Core)
+target_include_directories(markloc_locatebench PRIVATE src src/gui modules/chardet tools include ${Qt6_INCLUDE_DIRS})
+list(APPEND ALL_TARGETS markloc_locatebench)
+add_executable(markloc_scaleprobe tools/scale_probe.cpp)
+target_link_libraries(markloc_scaleprobe PRIVATE markloc_core ${OpenCV_LIBS} Qt6::Core)
+target_include_directories(markloc_scaleprobe PRIVATE src src/gui modules/chardet tools ${Qt6_INCLUDE_DIRS})
+if (TARGET markloc_scaleprobe)
+    list(APPEND ALL_TARGETS markloc_scaleprobe)
+endif()
 add_executable(markloc_patternbench tools/pattern_bench.cpp)
 target_link_libraries(markloc_patternbench PRIVATE markloc_core ${OpenCV_LIBS} Qt6::Core)
 target_include_directories(markloc_patternbench PRIVATE src src/gui modules/chardet tools ${Qt6_INCLUDE_DIRS})
@@ -755,12 +796,14 @@ add_executable(markloc_projalignbox tools/projalign_box.cpp)
     set(_moc_train "")
     set(_moc_split "")
     set(_moc_defect "")
+    set(_moc_locateview "")
     foreach (_hdr ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/TrainWindow.hpp
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/TrainToolWindow.hpp
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/CharBoxEditor.hpp
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/SplitVerifyWindow.hpp
                   ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/DefectViewWindow.hpp
-                  ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/BoxCanvas.hpp)
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/BoxCanvas.hpp
+                  ${CMAKE_CURRENT_SOURCE_DIR}/src/gui/LocateViewWindow.hpp)
         get_filename_component(_stem "${_hdr}" NAME_WE)
         set(_moc_cpp "${_moc_dir}/moc_${_stem}.cpp")
         add_custom_command(
@@ -775,6 +818,8 @@ add_executable(markloc_projalignbox tools/projalign_box.cpp)
             list(APPEND _moc_split "${_moc_cpp}")
         elseif (_stem STREQUAL "DefectViewWindow")
             list(APPEND _moc_defect "${_moc_cpp}")
+        elseif (_stem STREQUAL "LocateViewWindow")
+            list(APPEND _moc_locateview "${_moc_cpp}")
         elseif (_stem STREQUAL "BoxCanvas")
             # shared by markloc_train and markloc_splitcheck
             list(APPEND _moc_train "${_moc_cpp}")
@@ -787,10 +832,12 @@ add_executable(markloc_projalignbox tools/projalign_box.cpp)
     target_sources(markloc_train PRIVATE ${_moc_train})
     target_sources(markloc_splitcheck PRIVATE ${_moc_split})
     target_sources(markloc_defectview PRIVATE ${_moc_defect})
+    target_sources(markloc_locateview PRIVATE ${_moc_locateview})
     target_include_directories(markloc_gui PRIVATE "${_moc_dir}")
     target_include_directories(markloc_train PRIVATE "${_moc_dir}")
     target_include_directories(markloc_splitcheck PRIVATE "${_moc_dir}")
     target_include_directories(markloc_defectview PRIVATE "${_moc_dir}")
+    target_include_directories(markloc_locateview PRIVATE "${_moc_dir}")
 
     if (WIN32)
         target_link_libraries(markloc_gui PRIVATE Psapi)
