@@ -1,4 +1,4 @@
-﻿// locate_bench.cpp —— 定位算法测试台
+// locate_bench.cpp —— 定位算法测试台
 //
 // ================================================================
 // 用途
@@ -341,13 +341,13 @@ int main(int argc, char** argv) {
     if (csv) {
         std::fprintf(csv,
                      "image_file,image_w,image_h,char_index,accepted,conf,x,y,w,h,"
-                     "dx,dy,abs_dx,abs_dy,global_ok\n");
+                     "dx,dy,abs_dx,abs_dy,ink,global_ok\n");
     }
 
     // ---- 逐图处理
     int nOk = 0, nFail = 0, nTotalChars = 0, nAccepted = 0, nGlobalOk = 0;
-    double sumAbsDx = 0, sumAbsDy = 0;
-    std::vector<double> allDx, allDy;
+    double sumAbsDx = 0, sumAbsDy = 0, sumInk = 0;
+    std::vector<double> allDx, allDy, allInk;
 
     const int limit = opt.maxImages > 0 ? std::min(opt.maxImages, static_cast<int>(files.size()))
                                         : static_cast<int>(files.size());
@@ -384,34 +384,61 @@ int main(int argc, char** argv) {
             continue;
         }
 
-        // ---- 评估：与"模板框按整图尺度换算"的位置比
-        const double sx = modelW > 0 ? static_cast<double>(gray.cols) / modelW : 1.0;
-        const double sy = modelH > 0 ? static_cast<double>(gray.rows) / modelH : 1.0;
+        // ---- 评估
+        // 参照位置：用插件报告的整图仿射（scale/offset），而非图幅比例。
+        // 之前用 gray.cols/modelW 当参照，但真实变换不是图幅比例缩放
+        // （实测 scale≈1.0 + 小平移），导致假偏差 50px+。
+        // 这里的 dx/dy 现在是"定位框相对插件自身变换的残差"，
+        // 反映的是逐字符精调的量，不是绝对准确度。
+        // 绝对准确度用墨量验证（见下方 ink）。
+        const double sx = res.scaleX > 0 ? res.scaleX : 1.0;
+        const double sy = res.scaleY > 0 ? res.scaleY : 1.0;
+        const double ox = res.offsetX;
+        const double oy = res.offsetY;
 
         int acc = 0;
         double maxAbs = 0;
         for (int i = 0; i < res.charCount; ++i) {
             const LocatedChar& lc = res.chars[i];
             const TemplateBox& tb = boxes[static_cast<size_t>(i)];
-            const double ex = tb.x * sx;
-            const double ey = tb.y * sy;
+            const double ex = tb.x * sx + ox;
+            const double ey = tb.y * sy + oy;
             const double dx = lc.x - ex;
             const double dy = lc.y - ey;
             const double adx = std::abs(dx), ady = std::abs(dy);
             maxAbs = std::max(maxAbs, std::max(adx, ady));
             allDx.push_back(dx);
             allDy.push_back(dy);
+
+            // 墨量验证：定位框内灰度 > inkThr 的像素占比。
+            // 这是独立于任何参照系假设的客观准确度指标：
+            // 框套在字符上 → 墨量高；框偏了 → 墨量低。
+            double ink = 0.0;
+            {
+                const int inkThr = 100;
+                cv::Rect rr(lc.x, lc.y, lc.w, lc.h);
+                rr &= cv::Rect(0, 0, gray.cols, gray.rows);
+                if (rr.width > 0 && rr.height > 0) {
+                    const cv::Mat patch = gray(rr);
+                    ink = static_cast<double>(cv::countNonZero(patch > inkThr)) /
+                          (patch.rows * patch.cols);
+                }
+            }
+
             if (lc.accepted) {
                 ++acc;
                 ++nAccepted;
                 sumAbsDx += adx;
                 sumAbsDy += ady;
+                sumInk += ink;
+                allInk.push_back(ink);
             }
             if (csv) {
-                std::fprintf(csv, "\"%s\",%d,%d,%d,%d,%.4f,%d,%d,%d,%d,%.2f,%.2f,%.2f,%.2f,%d\n",
+                std::fprintf(csv,
+                             "\"%s\",%d,%d,%d,%d,%.4f,%d,%d,%d,%d,%.2f,%.2f,%.2f,%.2f,%.4f,%d\n",
                              fn.toUtf8().constData(), gray.cols, gray.rows, lc.index,
                              lc.accepted ? 1 : 0, lc.confidence, lc.x, lc.y, lc.w, lc.h, dx, dy,
-                             adx, ady, res.globalOk ? 1 : 0);
+                             adx, ady, ink, res.globalOk ? 1 : 0);
             }
         }
         nTotalChars += res.charCount;
@@ -466,6 +493,14 @@ int main(int argc, char** argv) {
         std::sort(v.begin(), v.end());
         std::printf("dy 分布: 中位 %.2f, p90 %.2f, 最大 %.2f\n", v[v.size() / 2],
                     v[v.size() * 9 / 10], v.back());
+    }
+    if (!allInk.empty()) {
+        std::sort(allInk.begin(), allInk.end());
+        double inkMed = allInk[allInk.size() / 2];
+        int inkGood = 0;
+        for (double v : allInk) if (v >= 0.15) ++inkGood;
+        std::printf("墨量验证(独立准确度): 均值 %.3f, 中位 %.3f, 高墨(>=0.15) %d/%zu\n",
+                    sumInk / allInk.size(), inkMed, inkGood, allInk.size());
     }
     std::printf("CSV: %s\n", csvPath.toUtf8().constData());
     return 0;

@@ -1,12 +1,7 @@
 @echo off
 rem ================================================================
 rem eval_plugin.bat - run locate_bench on a compiled plugin DLL
-rem
-rem usage: eval_plugin.bat <plugin.dll> <modelDir> <list.txt> [outDir]
-rem
-rem example:
-rem   eval_plugin.bat out\dev_plugin.dll release_defectview\model\v00 out\ok00.txt out\eval
-rem
+rem usage: eval_plugin.bat ^<plugin.dll^> ^<modelDir^> ^<list.txt^> [outDir]
 rem list.txt: one image path per line (UTF-8)
 rem ================================================================
 setlocal
@@ -30,6 +25,9 @@ echo [eval] model : %MODEL%
 echo [eval] list  : %LIST%
 echo [eval] out   : %OUT%
 echo.
+
+rem bench does not auto-create dir; fopen silently fails without it
+if not exist "%OUT%" mkdir "%OUT%"
 
 build\Release\markloc_locatebench.exe --plugin "%PLUGIN%" --model "%MODEL%" --list "%LIST%" --out "%OUT%"
 
