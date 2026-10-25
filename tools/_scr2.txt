@@ -1,0 +1,30 @@
+                // 轻微划痕放行：按灰度判断严重程度
+                //
+                // 划痕落在塑封体上时，其平均亮度反映刻痕深度：
+                //   很淡（< 0.45）→ 浅表擦痕，表面划伤，不影响刻印可读性 → 放行
+                //   中等（0.45~0.70）→ 可疑，记录但不判 NG
+                //   明显（> 0.70）或压在字符上 → 判 NG
+                // 门槛可由「灵敏度」调整。
+                const double meanGray = energy / std::max(1.0, static_cast<double>(covered));
+                const double grayThr = sens_.scratchMinGray;
+
+                if (meanGray < grayThr && !onChar) continue;     // 浅表擦痕，放行
+                if (score < sens_.scratchMinEnergy) continue;    // 太短太弱，放行
+
+                const cv::Point a1 = p1 + cv::Point(band.x, band.y);
+                const cv::Point a2 = p2 + cv::Point(band.x, band.y);
+                const cv::Scalar color =
+                    onChar ? cv::Scalar(0, 0, 255) : cv::Scalar(180, 120, 255);
+                cv::line(vis, a1, a2, color, onChar ? 3 : 2, cv::LINE_AA);
+
+                Hit h;
+                h.kind = QStringLiteral("划痕");
+                h.score = score;
+                h.detail = QStringLiteral("长%1px 亮度%2 %3")
+                               .arg(static_cast<int>(len))
+                               .arg(meanGray, 0, 'f', 2)
+                               .arg(onChar ? QStringLiteral("压字") : QStringLiteral("空白区"));
+                h.where = QStringLiteral("(%1,%2)→(%3,%4)").arg(a1.x).arg(a1.y).arg(a2.x).arg(a2.y);
+                hits_.push_back(h);
+            }
+        }

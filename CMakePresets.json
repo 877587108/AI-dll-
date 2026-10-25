@@ -1,0 +1,20 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Release x64 (VS2022 + OpenCV 4.10.0 official)",
+      "generator": "Visual Studio 17 2022",
+      "binaryDir": "${sourceDir}/build",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "cacheVariables": {
+        "OpenCV_ROOT": "D:/opencv",
+        "CMAKE_PREFIX_PATH": "D:/Program/QtDev6.7.3"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "release", "configurePreset": "release", "configuration": "Release" },
+    { "name": "debug",   "configurePreset": "release", "configuration": "Debug" }
+  ]
+}

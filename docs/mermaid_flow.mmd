@@ -1,0 +1,248 @@
+%% ============================================================
+%% markloc 识别流程 — Mermaid 代码集
+%% 用法：复制下方任一 ```mermaid 代码块的内容（去掉围栏）
+%% 直接粘贴到 GitHub / VS Code / Typora / mermaid.live
+%% ============================================================
+
+
+%% ============================================================
+%% 【图 1】识别总览：从图片到判定
+%% ============================================================
+flowchart TD
+    A["输入：图片文件夹<br/>含 *_00.tif … *_05.tif"] --> B["naming 解析文件名"]
+    B --> C["按料号前缀归并<br/>同产品 6 视角"]
+    C --> D{"调用入口"}
+    D -->|评估 / 训练| E["TrainWindow::evaluateAndShow"]
+    D -->|命令行| F["markloc_gui --eval"]
+
+    E --> G["Model::loadFrom<br/>读 v00..v05 模板 + params.txt"]
+    F --> G
+    G --> H{"模型加载成功?"}
+    H -->|否| HX["报错退出"]
+    H -->|是| I["逐视角 analyze()<br/>v = 0..5"]
+
+    I --> J["单图最佳分"]
+    J --> K["按料号聚合<br/>任一视角 NG 则该零件 NG"]
+    K --> L{"零件最高分 >= 1.0 ?"}
+    L -->|是| M["判 NG"]
+    L -->|否| N["判 OK"]
+
+    M --> O["输出：逐件判定表"]
+    N --> O
+    O --> P["同轮采集性能指标"]
+
+
+%% ============================================================
+%% 【图 2】单视角检测主干 analyze()
+%% ============================================================
+flowchart TD
+    S0["analyze(gray, vm, p)"] --> S1{"vm.ok ?<br/>该视角有模型?"}
+    S1 -->|否| SX["返回空 Result<br/>score = 0"]
+    S1 -->|是| L1["循环 i = 0..3<br/>logo / line1 / line2 / code"]
+
+    L1 --> L2{"roi.enabled ?<br/>该区域是否启用"}
+    L2 -->|否| L1
+    L2 -->|是| L3{"模型区域 ok<br/>且 ROI 在图内?"}
+    L3 -->|否| L1
+    L3 -->|是| L4["strokeSignal()<br/>构造归一化笔画信号 S"]
+
+    L4 --> L5["读模板 sRef ÷80 → 浮点"]
+    L5 --> L6["ECC 配准<br/>estimateWarp / applyWarp"]
+    L6 --> L7{"tolMask 尺寸<br/>== aligned 尺寸?"}
+    L7 -->|否| L1
+    L7 -->|是| L8["usable 掩膜<br/>四边屏蔽 edgeTB / edgeLR"]
+
+    L8 --> L9["allowed = NOT tolMask<br/>容差区内不报"]
+    L9 --> L10["extra = S>strokeHi ∧ allowed ∧ usable<br/>weak = S>strokeLo ∧ allowed ∧ usable"]
+
+    L10 --> B1["分支A 多余笔画<br/>scoreAppendage(aligned, extra)<br/>仅 logo 区"]
+    L10 --> B2["分支B 连续划痕<br/>scoreScratch(aligned, weak)"]
+    L10 --> B3["分支C 工号崩缺<br/>scoreCode(sImg, codeStat)<br/>仅 code 区且 checkCode"]
+
+    B2 --> SC["regionScore = scratchSevere / scratchT"]
+    SC --> MX{"是 logo 区?"}
+    MX -->|是| MXA["regionScore =<br/>max(regionScore, appendage/appendageT)"]
+    MX -->|否| OV
+    MXA --> OV{"是 code 区<br/>且 checkCode?"}
+    OV -->|是| OVC["regionScore 被覆盖为<br/>scoreCode 的结果"]
+    OV -->|否| GATE
+    OVC --> GATE{"ecc >= 门槛?<br/>code 区用 codeEccMin<br/>其他用 eccMin"}
+
+    GATE -->|否| Z["regionScore = 0<br/>该区域不计分"]
+    GATE -->|是| KEEP
+    Z --> KEEP["rr.score = regionScore<br/>res.score = max(res.score, regionScore)"]
+    KEEP --> L1
+
+    L1 --> SF{"useSurface<br/>且 surfOk ?"}
+    SF -->|是| SFY["scoreSurface()<br/>全芯片表面划痕"]
+    SF -->|否| SFE
+    SFY --> SFE["视角分 = 四区域最高<br/>ng = score >= 1.0"]
+
+
+%% ============================================================
+%% 【图 3】信号构造 strokeSignal()
+%% ============================================================
+flowchart TD
+    A["patch = gray(roi) → CV_32F"] --> B["bg = GaussianBlur(patch, σ = sigma)"]
+    B --> C["d = patch − bg<br/>去掉低频背景"]
+    C --> D{"p.invert ?"}
+    D -->|是，暗刻印| D1["d = −d<br/>笔画变正值"]
+    D -->|否| E
+    D1 --> E["统计 512-bin 直方图<br/>取 94 分位数 q94"]
+    E --> F["scale = max(8.0, q94)<br/>自适应归一化尺度"]
+    F --> G["S = d / scale"]
+    G --> H["threshold(S, 0, TOZERO)<br/>丢弃负残差"]
+    H --> I["输出 S 值域 0 到 +∞"]
+
+
+%% ============================================================
+%% 【图 4A】分支A 多余笔画 scoreAppendage
+%% ============================================================
+flowchart TD
+    A["extra 掩膜<br/>S > strokeHi 且容差区外"] --> B["connectedComponentsWithStats"]
+    B --> C["遍历每个连通域"]
+    C --> D{"面积 >= 15 px?"}
+    D -->|否| C
+    D -->|是| E["收集连通域像素点"]
+    E --> F["calcCovarMatrix + eigen<br/>PCA 特征值 λ1 ≥ λ2"]
+    F --> G{"sqrt(λ1/λ2) > 2.2 ?<br/>足够细长"}
+    G -->|否| C2["判为圆形污点<br/>跳过"]
+    G -->|是| H["得分 = area × 平均 S"]
+    H --> I["取所有连通域最大值"]
+    C2 --> C
+
+
+%% ============================================================
+%% 【图 4B】分支B 连续划痕 scoreScratch
+%% ============================================================
+flowchart TD
+    A["weak 掩膜<br/>S > strokeLo 且容差区外"] --> B["HoughLinesP<br/>阈值 20 / minLen 30 / maxGap 60"]
+    B --> C["遍历每条候选线段"]
+    C --> D["沿线等步长采样<br/>±4px 内累加 energy = Σ(S − strokeLo)"]
+    D --> E["coverage = ±1px 窄带命中率"]
+    E --> F{"coverage >= scratchMinCoverage<br/>默认 0.25 ?"}
+    F -->|否| C2["判断为噪点连线<br/>丢弃"]
+    F -->|是| G["score = energy × len"]
+    G --> H{"len >= scratchMinLen<br/>默认 160 px ?"}
+    H -->|是| I["写入 scratchSevere<br/>参与判定"]
+    H -->|否| J["只记为 scratch<br/>不参与判定"]
+    C2 --> C
+
+
+%% ============================================================
+%% 【图 4C】分支C 工号崩缺 scoreCode
+%% ============================================================
+flowchart TD
+    A["sImg 笔画信号"] --> B{"codeStat.valid ?"}
+    B -->|否| Z["返回 0<br/>该分支静默失效"]
+    B -->|是| C["measureCode:<br/>二值化 S>strokeHi + 3×3 开运算"]
+    C --> D["distanceTransform<br/>2 × dist = 局部笔画宽度"]
+    D --> E["取宽度中位数作为正常基线"]
+    E --> F["超粗阈值 = max(1.6×中位, 中位+3)"]
+    F --> G["thickRatio = 超粗像素 / 笔画像素"]
+    G --> H["z = (thickRatio − 建模均值) / 建模标准差"]
+    H --> I["死区 zDead = max(0.5, codeZNg − 1.5)"]
+    I --> J["返回 max(0, z − zDead) / 1.5"]
+
+
+%% ============================================================
+%% 【图 5】产品级聚合与判定
+%% ============================================================
+flowchart TD
+    A["6 个视角的图 + present 标记"] --> B["遍历 v = 0..5"]
+    B --> C{"present ∧ 非空<br/>∧ 模型有效?"}
+    C -->|否| B
+    C -->|是| D{"该视角 enabled ?"}
+    D -->|否| B2["跳过<br/>不参与判定"]
+    D -->|是| E["analyze() 得该视角分<br/>记录四区域最高分"]
+    E --> B
+
+    B2 --> F["当前实现：<br/>GUI 评估按料号聚合"]
+    F --> G["同一料号的所有视角图<br/>取最高分"]
+    G --> H{"最高分 >= 1.0 ?"}
+    H -->|是| I["该零件判 NG"]
+    H -->|否| J["该零件判 OK"]
+
+
+%% ============================================================
+%% 【图 6】评估 + 性能统计完整流程
+%% ============================================================
+flowchart TD
+    A["选择图片文件夹 + 模型目录"] --> B["collectByView<br/>按 _NN 分视角"]
+    B --> C["Model::loadFrom<br/>读模板与参数"]
+    C --> D{"加载成功?"}
+    D -->|否| DX["报错并终止"]
+    D -->|是| E["遍历每个视角的每张图"]
+
+    E --> F["readGray<br/>QFile + imdecode<br/>避免中文路径问题"]
+    F --> G{"解码成功?"}
+    G -->|否| GX["计入 skipped<br/>继续下一张"]
+    G -->|是| H["计时开始<br/>analyze() 识别"]
+    H --> I["累计耗时、采样内存"]
+    I --> J["inferTruth<br/>判断真值：目录 ok/ng 或 _Pass/_Failed"]
+    J --> K["按料号聚合结果"]
+    K --> E
+
+    GX --> L["循环结束"]
+    K --> L
+    L --> M["统计按图口径<br/>TP / FP / FN / TN"]
+    L --> N["统计按零件口径<br/>TP / FP / FN / TN"]
+    M --> O["计算性能指标"]
+    N --> O
+    O --> P["总耗时 / 单张平均 / 中位 / 最快 / 最慢"]
+    O --> Q["解码小计 / 识别小计"]
+    O --> R["吞吐率 张每秒<br/>零件速率 颗每秒"]
+    O --> S["内存当前 / 峰值<br/>私有当前 / 峰值"]
+    P --> T["填入结果表格 + 日志"]
+    Q --> T
+    R --> T
+    S --> T
+
+
+%% ============================================================
+%% 【图 7】完整数据流（横向）
+%% ============================================================
+flowchart LR
+    subgraph IN["输入"]
+        I1["目录扫描"]
+        I2["文件名解析<br/>0112_RT_Pass_02.tif"]
+    end
+
+    subgraph PREP["预处理"]
+        P1["灰度解码"]
+        P2["strokeSignal<br/>去背景 + 归一化"]
+        P3["ECC 配准"]
+        P4["掩膜构造<br/>usable / allowed"]
+    end
+
+    subgraph DET["三分支检测"]
+        D1["A 多余笔画<br/>PCA 伸长比"]
+        D2["B 连续划痕<br/>Hough + 密度 + 长度"]
+        D3["C 工号崩缺<br/>距离变换 + z-score"]
+    end
+
+    subgraph SCORE["评分"]
+        S1["× 归一化分母<br/>scratchT / appendageT"]
+        S2["× ECC 门控"]
+        S3["区域分 = max"]
+        S4["视角分 = 四区域最高"]
+    end
+
+    subgraph OUT["判定与统计"]
+        O1["按料号聚合<br/>取最高分"]
+        O2{" >= 1.0 ?"}
+        O3["OK / NG"]
+        O4["准确率 + 性能"]
+    end
+
+    I1 --> I2 --> P1 --> P2 --> P3 --> P4
+    P4 --> D1
+    P4 --> D2
+    P4 --> D3
+    D1 --> S1
+    D2 --> S1
+    D3 --> S1
+    S1 --> S2 --> S3 --> S4 --> O1 --> O2
+    O2 -->|是| O3
+    O2 -->|否| O3
+    O3 --> O4

@@ -1,0 +1,61 @@
+# ============================================================ 构建产物
+build/
+dist/
+release_defectview/
+release_splitcheck/
+release_test/
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.obj
+*.exp
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+CMakeUserPresets.json
+
+# ============================================================ 数据（体积大，不入库）
+# 图片语料 5.5G、实验中间结果 1.9G
+image/
+out/
+models/
+model/
+*.tif
+*.tiff
+*.bmp
+*.png
+*.jpg
+*.jpeg
+# 但保留文档里的图（如需引用请单独放 docs/img 并断言式放行）
+!docs/**/*.png
+
+# ============================================================ 临时与杂项
+_unused/
+another/
+*.log
+*.tmp
+*.bak
+*.orig
+*.rej
+Thumbs.db
+desktop.ini
+.DS_Store
+__pycache__/
+*.pyc
+
+# ============================================================ 本地脚本产物
+_build.py
+_*.ps1.bak
+
+# ============================================================ IDE 本地配置
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
